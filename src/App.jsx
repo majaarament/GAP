@@ -116,6 +116,7 @@ const initialState = {
   level: 1,
   levelDone: { 1: false, 2: false, 3: false },
   showLevelComplete: false,
+  showBriefing: true,
   metrics: { environment: 52, social: 51, governance: 49, alignment: 46 },
   answers: {},
   voiceSaved: {},
@@ -216,7 +217,7 @@ function App() {
 
   // Start timer when entering play phase
   useEffect(() => {
-    if (game.phase === "play" && game.level === 1 && !game.trashTimerActive && !game.levelDone[1]) {
+    if (game.phase === "play" && game.level === 1 && !game.trashTimerActive && !game.levelDone[1] && !game.showBriefing) {
       setTimeout(() => setGame((prev) => ({ ...prev, trashTimerActive: true })), 800);
     }
   }, [game.phase]);
@@ -292,7 +293,7 @@ function App() {
     setGame((prev) => {
       const next = prev.level + 1;
       if (next > 3) return { ...prev, showLevelComplete: false, phase: "summary" };
-      return { ...prev, showLevelComplete: false, level: next, activeNode: null };
+      return { ...prev, showLevelComplete: false, level: next, activeNode: null, showBriefing: true };
     });
   };
 
@@ -383,6 +384,13 @@ function App() {
         </AnimatePresence>
 
         <AnimatePresence>
+          {game.phase === "play" && game.showBriefing && !game.showLevelComplete && (
+            <LevelBriefing level={game.level} playerName={game.playerName}
+              onStart={() => setGame((prev) => ({ ...prev, showBriefing: false }))} />
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
           {game.phase === "play" && game.showLevelComplete && (
             <LevelCompleteOverlay level={game.level} onContinue={advanceLevel} />
           )}
@@ -400,7 +408,7 @@ function HeaderBar({ selectedProfile }) {
         <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs uppercase tracking-[0.24em] text-emerald-200/80 backdrop-blur-xl">
           <SparklesIcon className="h-3.5 w-3.5" /> Guardians of Verdantia
         </div>
-        <h1 className="text-3xl font-semibold tracking-tight lg:text-5xl">A real forest you can walk through</h1>
+        <h1 className="text-3xl font-semibold tracking-tight lg:text-5xl">GAP: your ESG alignment platform</h1>
       </div>
       {selectedProfile && (
         <div className="pointer-events-auto rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-sm text-white/70 backdrop-blur-xl">
@@ -658,6 +666,98 @@ function QuickQuestPopup({ nodeId, game, saveAnswer }) {
   );
 }
 
+// ── Level briefing overlay ────────────────────────────────────────────────
+const LEVEL_BRIEFINGS = {
+  1: {
+    color: "#6ee7ff",
+    icon: Droplets,
+    steps: [
+      "Trash pieces are scattered across the forest — look for glowing items on the ground.",
+      "Walk close to a piece of trash to collect it automatically — no button needed.",
+      "Collect all 12 pieces before the 90-second timer runs out.",
+      "The faster you collect, the higher your Environment score. Good luck!",
+    ],
+  },
+  2: {
+    color: "#ffca76",
+    icon: Users,
+    steps: [
+      "Four community stations are spread around the forest — each marked with a glowing beacon.",
+      "Walk up to a station and a question card will appear automatically.",
+      "Pick the answer that feels most honest — there are no wrong answers.",
+      "Hear all 4 communities to complete this level.",
+    ],
+  },
+  3: {
+    color: "#b89cff",
+    icon: ShieldCheck,
+    steps: [
+      "Head to the Hollow Council — the glowing violet structure in the forest.",
+      "Walk inside and the governance interview will open automatically.",
+      "Answer 3 questions, then examine the evidence tiles to uncover the truth.",
+      "Choose a policy to determine how the Council will respond to what you've found.",
+    ],
+  },
+};
+
+function LevelBriefing({ level, playerName, onStart }) {
+  const info = LEVEL_INFO[level];
+  const briefing = LEVEL_BRIEFINGS[level];
+  const Icon = briefing.icon;
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
+      <motion.div initial={{ scale: 0.9, y: 30 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, opacity: 0 }}
+        transition={{ type: "spring", stiffness: 260, damping: 22 }}
+        className="w-full max-w-md mx-4 rounded-3xl border border-white/10 bg-[#0d1117] overflow-hidden shadow-2xl">
+        {/* colour band */}
+        <div className="h-1.5" style={{ background: `linear-gradient(to right, ${briefing.color}88, ${briefing.color}22)` }} />
+
+        <div className="p-7">
+          {/* header */}
+          <div className="flex items-center gap-3 mb-5">
+            <div className="h-11 w-11 rounded-2xl flex items-center justify-center shrink-0"
+              style={{ background: briefing.color + "18", border: `1.5px solid ${briefing.color}44` }}>
+              <Icon className="h-5 w-5" style={{ color: briefing.color }} />
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-widest mb-0.5" style={{ color: briefing.color }}>
+                Level {level} · Mission Briefing
+              </div>
+              <div className="text-lg font-semibold text-white leading-tight">{info.title}</div>
+            </div>
+          </div>
+
+          {playerName && (
+            <p className="text-sm text-white/50 mb-4">
+              Ready, <span className="text-white/80 font-medium">{playerName}</span>? Here's what to do:
+            </p>
+          )}
+
+          {/* steps */}
+          <ol className="space-y-3 mb-6">
+            {briefing.steps.map((step, i) => (
+              <li key={i} className="flex gap-3 items-start">
+                <span className="mt-0.5 h-5 w-5 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold"
+                  style={{ background: briefing.color + "22", color: briefing.color }}>
+                  {i + 1}
+                </span>
+                <span className="text-sm text-white/70 leading-snug">{step}</span>
+              </li>
+            ))}
+          </ol>
+
+          <Button onClick={onStart}
+            className="w-full rounded-xl font-semibold py-3 h-auto text-slate-950"
+            style={{ background: briefing.color }}>
+            Start Level {level} <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // ── Level complete overlay ────────────────────────────────────────────────
 function LevelCompleteOverlay({ level, onContinue }) {
   const info = LEVEL_INFO[level];
@@ -843,16 +943,102 @@ function River() {
 }
 
 function CouncilPlatform() {
+  const spireRef = useRef();
+  const ringARef = useRef();
+  const ringBRef = useRef();
+  const lightRef = useRef();
+  const orbsRef = useRef([]);
+
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    if (spireRef.current) spireRef.current.emissiveIntensity = 1.4 + Math.sin(t * 1.8) * 0.7;
+    if (ringARef.current) ringARef.current.rotation.y = t * 0.55;
+    if (ringBRef.current) ringBRef.current.rotation.y = -t * 0.38;
+    if (lightRef.current) lightRef.current.intensity = 2.8 + Math.sin(t * 2.1) * 1.2;
+    orbsRef.current.forEach((orb, i) => {
+      if (!orb) return;
+      const angle = t * 0.7 + (i / 6) * Math.PI * 2;
+      orb.position.x = Math.cos(angle) * 3.5;
+      orb.position.z = Math.sin(angle) * 3.5;
+      orb.position.y = 2.2 + Math.sin(t * 1.3 + i) * 0.4;
+    });
+  });
+
+  const pillars = useMemo(() => Array.from({ length: 6 }, (_, i) => {
+    const a = (i / 6) * Math.PI * 2;
+    return { x: Math.cos(a) * 3.1, z: Math.sin(a) * 3.1 };
+  }), []);
+
   return (
     <group position={[11, 0, 8]}>
-      <mesh castShadow receiveShadow position={[0, 0.5, 0]}>
-        <cylinderGeometry args={[3.2, 3.8, 1, 6]} />
-        <meshStandardMaterial color="#4b3a59" roughness={0.9} />
+      {/* point light above council */}
+      <pointLight ref={lightRef} position={[0, 6, 0]} color="#c084fc" intensity={3} distance={14} castShadow />
+
+      {/* base platform — slightly wider, darker stone */}
+      <mesh castShadow receiveShadow position={[0, 0.45, 0]}>
+        <cylinderGeometry args={[3.4, 4.0, 0.9, 6]} />
+        <meshStandardMaterial color="#2e1f3e" roughness={0.85} metalness={0.15} />
       </mesh>
-      <mesh castShadow position={[0, 1.5, 0]}>
-        <coneGeometry args={[1.6, 2.1, 6]} />
-        <meshStandardMaterial color="#5e5072" roughness={0.9} />
+      {/* inner raised dais */}
+      <mesh castShadow receiveShadow position={[0, 0.95, 0]}>
+        <cylinderGeometry args={[2.0, 2.4, 0.2, 6]} />
+        <meshStandardMaterial color="#3d2b52" roughness={0.8} metalness={0.2} />
       </mesh>
+
+      {/* glowing floor rune disc */}
+      <mesh position={[0, 0.96, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[1.7, 32]} />
+        <meshStandardMaterial emissive="#a855f7" emissiveIntensity={0.6} color="#a855f7" transparent opacity={0.35} />
+      </mesh>
+
+      {/* standing pillars */}
+      {pillars.map((p, i) => (
+        <group key={i} position={[p.x, 0, p.z]}>
+          <mesh castShadow position={[0, 1.5, 0]}>
+            <cylinderGeometry args={[0.18, 0.22, 3, 6]} />
+            <meshStandardMaterial color="#3b2a50" roughness={0.9} metalness={0.1} />
+          </mesh>
+          {/* pillar cap glow */}
+          <mesh position={[0, 3.1, 0]}>
+            <sphereGeometry args={[0.18, 12, 12]} />
+            <meshStandardMaterial emissive="#c084fc" color="#c084fc" emissiveIntensity={1.8} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* central spire */}
+      <mesh castShadow position={[0, 1.06, 0]}>
+        <coneGeometry args={[0.9, 4.2, 6]} />
+        <meshStandardMaterial color="#4c2d6b" roughness={0.75} metalness={0.2} />
+      </mesh>
+      <mesh position={[0, 3.4, 0]}>
+        <coneGeometry args={[0.28, 1.6, 6]} />
+        <meshStandardMaterial ref={spireRef} emissive="#d946ef" color="#d946ef" emissiveIntensity={1.8} />
+      </mesh>
+
+      {/* rotating ring A */}
+      <group ref={ringARef} position={[0, 2.4, 0]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[2.5, 0.045, 8, 64]} />
+          <meshStandardMaterial emissive="#a855f7" color="#a855f7" emissiveIntensity={1.2} />
+        </mesh>
+      </group>
+
+      {/* rotating ring B — tilted */}
+      <group ref={ringBRef} position={[0, 2.4, 0]} rotation={[0.6, 0, 0]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[2.0, 0.035, 8, 64]} />
+          <meshStandardMaterial emissive="#7c3aed" color="#7c3aed" emissiveIntensity={1.0} />
+        </mesh>
+      </group>
+
+      {/* orbiting orbs */}
+      {Array.from({ length: 6 }, (_, i) => (
+        <mesh key={i} ref={(el) => (orbsRef.current[i] = el)} position={[0, 2.2, 0]}>
+          <sphereGeometry args={[0.1, 10, 10]} />
+          <meshStandardMaterial emissive="#e879f9" color="#e879f9" emissiveIntensity={2.5} />
+        </mesh>
+      ))}
     </group>
   );
 }
@@ -865,6 +1051,8 @@ function ForestTrees() {
       const radius = 12 + (i % 8) * 1.6 + ((i * 17) % 10) * 0.35;
       const x = Math.cos(angle) * radius, z = Math.sin(angle) * radius;
       if (Math.abs(x) < 5 && Math.abs(z) < 5) continue;
+      const dx = x - 11, dz = z - 8;
+      if (dx * dx + dz * dz < 36) continue; // clear area around Hollow Council
       result.push({ x, z, scale: 0.9 + (i % 5) * 0.14, hue: i % 3, glow: i % 7 === 0 });
     }
     return result;
