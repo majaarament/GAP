@@ -9,6 +9,90 @@ import {
   Sparkles as SparklesIcon, Trees, Users,
 } from "lucide-react";
 
+// ── Google Sheets integration ─────────────────────────────────────────────
+//
+// HOW TO SET UP:
+//  1. Open Google Sheets → create a new sheet.
+//  2. In the sheet, go to Extensions → Apps Script.
+//  3. Replace the default code with this:
+//
+//  ------------------------------------------------------------------
+//  function doPost(e) {
+//    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+//    var data = JSON.parse(e.parameter.payload);
+//    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+//    if (headers[0] === "") {
+//      // Write header row on first run
+//      var cols = Object.keys(data);
+//      sheet.getRange(1, 1, 1, cols.length).setValues([cols]);
+//    }
+//    var row = Object.keys(data).map(function(k) { return data[k] ?? ""; });
+//    sheet.appendRow(row);
+//    return ContentService.createTextOutput(JSON.stringify({ status: "ok" }))
+//      .setMimeType(ContentService.MimeType.JSON);
+//  }
+//  ------------------------------------------------------------------
+//
+//  4. Click Deploy → New deployment → Web app.
+//     Execute as: Me | Who has access: Anyone
+//  5. Copy the deployment URL and paste it below.
+
+//AKfycbyDCqTmq8W75kfFLhsSTI0R8XXcvJz1K_ThWyEavvlli7TvjrrfgKsNUgTFIGo6GpJpAA
+const SHEETS_ENDPOINT = "https://script.google.com/macros/s/AKfycbwlusybEOk2_e45DLWR3pAc8cdV21ehGg8nEyYjRX0Kh8I49dsphWkrz-lXX5GLg5d38A/exec";
+
+function buildSheetRow(game) {
+  const p = CHARACTER_PATHS[game.selectedCharacter] || CHARACTER_PATHS.beaver;
+  const qs = QUICK_QUESTIONS;
+  return {
+    timestamp:            new Date().toISOString(),
+    player_name:          game.playerName || "",
+    character:            game.selectedCharacter || "",
+    play_path:            p.tag,
+    levels_completed:     Object.values(game.levelDone).filter(Boolean).length,
+    // — ESG scores —
+    score_environment:    game.metrics.environment,
+    score_social:         game.metrics.social,
+    score_governance:     game.metrics.governance,
+    score_alignment:      game.metrics.alignment,
+    // — Level 1 —
+    trash_collected:      game.trashCollected.length,
+    trash_target:         p.trashCount,
+    // — Level 1 Owl survey —
+    owl_obs1:             game.owlSurveyAnswered?.owl_obs1 || "",
+    owl_obs2:             game.owlSurveyAnswered?.owl_obs2 || "",
+    owl_obs3:             game.owlSurveyAnswered?.owl_obs3 || "",
+    owl_obs4:             game.owlSurveyAnswered?.owl_obs4 || "",
+    // — Level 2 station answers —
+    station_river:        game.answers?.[qs.river?.key]      || "",
+    station_otter:        game.answers?.[qs.otter?.key]      || "",
+    station_meadow:       game.answers?.[qs.meadow?.key]     || "",
+    station_deer:         game.answers?.[qs.deer?.key]       || "",
+    station_archive:      game.answers?.[qs.archive?.key]    || "",
+    // — Level 3 council interview —
+    council_q1:           game.voiceSaved?.council_q1 || "",
+    council_q2:           game.voiceSaved?.council_q2 || "",
+    council_q3:           game.voiceSaved?.council_q3 || "",
+    // — Level 3 evidence & policy —
+    evidence_ledger:      game.evidenceFound?.hiddenLedger   ? "found" : "missed",
+    evidence_minutes:     game.evidenceFound?.missingMinutes ? "found" : "missed",
+    evidence_seal:        game.evidenceFound?.brokenSeal     ? "found" : "missed",
+    policy_chosen:        game.policyChoice || "none",
+  };
+}
+
+async function postToSheets(game) {
+  if (!SHEETS_ENDPOINT || !SHEETS_ENDPOINT.startsWith("https://")) return;
+  const row = buildSheetRow(game);
+  // URLSearchParams sends as application/x-www-form-urlencoded — a "simple" CORS header
+  // that works reliably with Apps Script via e.parameter.payload (no preflight needed).
+  const params = new URLSearchParams();
+  params.append("payload", JSON.stringify(row));
+  await fetch(SHEETS_ENDPOINT, {
+    method: "POST",
+    body: params,   // URLSearchParams → no preflight; Google adds Access-Control-Allow-Origin automatically
+  });
+}
+
 // ── Constants ────────────────────────────────────────────────────────────
 const PLAYER_SPEED = 5.5;
 const RUN_MULTIPLIER = 1.5;
@@ -95,10 +179,47 @@ const QUICK_QUESTIONS = {
 const LEVEL2_REQUIRED = ["river", "otter", "meadow", "deer"];
 
 const characterProfiles = {
-  beaver: { name: "Brindle the Beaver", title: "Builder of Balance", icon: Hammer, description: "Hands-on and practical. Better at environmental action and visible repair.", bonus: { environment: 4, alignment: 1 }, accent: "emerald" },
-  fox: { name: "Sable the Fox", title: "Mediator of the Glades", icon: Scale, description: "Diplomatic and strategic. Better at negotiation and social framing.", bonus: { social: 4, alignment: 1 }, accent: "amber" },
-  owl: { name: "Aster the Owl", title: "Watcher of the Council", icon: Eye, description: "Reflective and investigative. Better at governance and uncovering truth.", bonus: { governance: 4, alignment: 1 }, accent: "violet" },
+  beaver: { name: "Brindle the Beaver", title: "Builder of Balance", icon: Hammer, description: "Hands-on and practical. Better at environmental action and visible repair.", bonus: { environment: 4, alignment: 1 }, accent: "emerald",
+    playStyle: "Action-first", playDesc: "Trash collection game · timed challenges · fast-paced" },
+  fox: { name: "Sable the Fox", title: "Mediator of the Glades", icon: Scale, description: "Diplomatic and strategic. Better at negotiation and social framing.", bonus: { social: 4, alignment: 1 }, accent: "amber",
+    playStyle: "Balanced", playDesc: "Light cleanup + community conversations · relaxed pace" },
+  owl: { name: "Aster the Owl", title: "Watcher of the Council", icon: Eye, description: "Reflective and investigative. Better at governance and uncovering truth.", bonus: { governance: 4, alignment: 1 }, accent: "violet",
+    playStyle: "Observer", playDesc: "Survey questions + governance interview · no game tasks" },
 };
+
+// Per-character experience paths
+const CHARACTER_PATHS = {
+  beaver: { tag: "Action path",   l1Mode: "trash",       trashCount: 12, trashTime: 90  },
+  fox:    { tag: "Balanced path", l1Mode: "trash-light", trashCount: 6,  trashTime: 120 },
+  owl:    { tag: "Observer path", l1Mode: "survey",      trashCount: 0,  trashTime: null },
+};
+
+const OWL_SURVEY = [
+  { id: "owl_obs1", q: "Looking around the forest, what stands out to you most?",
+    options: [
+      ["Debris and damage on the ground", { environment: 3 }],
+      ["Faded signs — the systems feel neglected", { governance: 2 }],
+      ["The quiet. Nobody seems to be watching.", { social: 3, alignment: 1 }],
+    ] },
+  { id: "owl_obs2", q: "How would you describe the current state of this forest?",
+    options: [
+      ["Declining but recoverable if we act now", { environment: 4, alignment: 1 }],
+      ["Stable on the surface — fragile underneath", { governance: 3 }],
+      ["At risk, and the people here know it", { social: 4, alignment: 2 }],
+    ] },
+  { id: "owl_obs3", q: "What should Verdantia prioritize above all else?",
+    options: [
+      ["Visible cleanup — show action, build trust", { environment: 3, alignment: 2 }],
+      ["Better communication — let communities speak", { social: 4, alignment: 2 }],
+      ["Transparent governance — stop hiding the data", { governance: 5, alignment: 3 }],
+    ] },
+  { id: "owl_obs4", q: "How confident are you that current leadership sees the full picture?",
+    options: [
+      ["Fairly confident — they mean well", { alignment: 2 }],
+      ["Uncertain — there are gaps in what's shared", { governance: 3, alignment: 1 }],
+      ["Not at all — key signals are being missed", { governance: 5, alignment: 3 }],
+    ] },
+];
 
 const questNodes = [
   { id: "river", label: "Overflowing River", chapter: "Environment", pos: [-10, 0.65, 6], color: "#6ee7ff", icon: Droplets, levels: [2] },
@@ -125,6 +246,7 @@ const initialState = {
   trashCollected: [],
   trashTimerLeft: TRASH_TIME,
   trashTimerActive: false,
+  owlSurveyAnswered: {},
   evidenceFound: { hiddenLedger: false, missingMinutes: false, brokenSeal: false },
   policyChoice: null,
   log: [],
@@ -185,8 +307,10 @@ function App() {
   const [playerPos, setPlayerPos] = useState([...START_PLAYER_POS]);
   const [nearestNodeId, setNearestNodeId] = useState(null);
   const [freeCamera, setFreeCamera] = useState(false);
+  const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
 
   const selectedProfile = game.selectedCharacter ? characterProfiles[game.selectedCharacter] : null;
+  const path = CHARACTER_PATHS[game.selectedCharacter] || CHARACTER_PATHS.beaver;
   const evidenceCount = Object.values(game.evidenceFound).filter(Boolean).length;
 
   const forestStatus = useMemo(() => {
@@ -215,12 +339,14 @@ function App() {
     return () => clearInterval(t);
   }, [game.trashTimerActive]);
 
-  // Start timer when entering play phase
+  // Start timer when entering play phase (not for owl survey path)
   useEffect(() => {
     if (game.phase === "play" && game.level === 1 && !game.trashTimerActive && !game.levelDone[1] && !game.showBriefing) {
-      setTimeout(() => setGame((prev) => ({ ...prev, trashTimerActive: true })), 800);
+      if (path.l1Mode !== "survey") {
+        setTimeout(() => setGame((prev) => ({ ...prev, trashTimerActive: true })), 800);
+      }
     }
-  }, [game.phase]);
+  }, [game.phase, game.showBriefing]);
 
   // Level 2 completion
   const level2Complete = useMemo(() => LEVEL2_REQUIRED.every((id) => QUICK_QUESTIONS[id].key in game.answers), [game.answers]);
@@ -244,6 +370,15 @@ function App() {
     }
   }, [game.policyChoice, game.level]);
 
+  // Save to Google Sheets when game ends
+  useEffect(() => {
+    if (game.phase !== "summary") return;
+    setSaveStatus("saving");
+    postToSheets(game)
+      .then(() => setSaveStatus("saved"))
+      .catch(() => setSaveStatus("error"));
+  }, [game.phase]);
+
   // Camera toggle
   useEffect(() => {
     if (game.phase !== "play") return undefined;
@@ -256,11 +391,25 @@ function App() {
     setGame((prev) => {
       if (prev.trashCollected.includes(id)) return prev;
       const next = [...prev.trashCollected, id];
-      const allDone = next.length >= TRASH_POSITIONS.length;
+      const targetCount = CHARACTER_PATHS[prev.selectedCharacter]?.trashCount ?? TRASH_POSITIONS.length;
+      const allDone = next.length >= targetCount;
       return {
         ...prev, trashCollected: next,
         log: [...prev.log, { type: "trash", id }],
         ...(allDone ? { trashTimerActive: false, levelDone: { ...prev.levelDone, 1: true }, showLevelComplete: true, metrics: applyEffects(prev.metrics, { environment: 8, alignment: 2 }) } : {}),
+      };
+    });
+  };
+
+  const answerOwlSurvey = (id, label, effects) => {
+    setGame((prev) => {
+      const newAnswered = { ...prev.owlSurveyAnswered, [id]: label };
+      const allDone = OWL_SURVEY.every((q) => newAnswered[q.id]);
+      return {
+        ...prev,
+        owlSurveyAnswered: newAnswered,
+        metrics: applyEffects(prev.metrics, effects),
+        ...(allDone ? { levelDone: { ...prev.levelDone, 1: true }, showLevelComplete: true } : {}),
       };
     });
   };
@@ -286,7 +435,8 @@ function App() {
 
   const chooseCharacter = (id) => {
     if (!characterProfiles[id]) return;
-    setGame((prev) => ({ ...prev, selectedCharacter: id, phase: "play", metrics: applyEffects(prev.metrics, characterProfiles[id].bonus) }));
+    const p = CHARACTER_PATHS[id];
+    setGame((prev) => ({ ...prev, selectedCharacter: id, phase: "play", trashTimerLeft: p?.trashTime ?? TRASH_TIME, metrics: applyEffects(prev.metrics, characterProfiles[id].bonus) }));
   };
 
   const advanceLevel = () => {
@@ -321,7 +471,7 @@ function App() {
                   nearestNodeId={nearestNodeId} setNearestNodeId={setNearestNodeId}
                   freeCamera={freeCamera} character={game.selectedCharacter}
                   level={game.level} trashCollected={game.trashCollected}
-                  onCollect={collectTrash} answeredNodeKeys={answeredNodeKeys}
+                  onCollect={collectTrash} answeredNodeKeys={answeredNodeKeys} trashCount={path.trashCount}
                 />
               </Suspense>
             </Canvas>
@@ -363,14 +513,14 @@ function App() {
                   </AnimatePresence>
                 </div>
                 <div className="flex items-end gap-3">
-                  <ObjectiveHud game={game} evidenceCount={evidenceCount} />
+                  <ObjectiveHud game={game} evidenceCount={evidenceCount} path={path} />
                   <div className="ml-auto"><ControlStrip /></div>
                 </div>
               </motion.div>
             )}
             {game.phase === "summary" && (
               <motion.div key="summary" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="pointer-events-auto mx-auto mt-4 max-w-6xl">
-                <SummaryScreen game={game} selectedProfile={selectedProfile} forestStatus={forestStatus} evidenceCount={evidenceCount} restart={resetGame} />
+                <SummaryScreen game={game} selectedProfile={selectedProfile} forestStatus={forestStatus} evidenceCount={evidenceCount} restart={resetGame} saveStatus={saveStatus} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -384,8 +534,14 @@ function App() {
         </AnimatePresence>
 
         <AnimatePresence>
+          {game.phase === "play" && game.level === 1 && path.l1Mode === "survey" && !game.showBriefing && !game.levelDone[1] && (
+            <OwlObservePanel game={game} onAnswer={answerOwlSurvey} />
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
           {game.phase === "play" && game.showBriefing && !game.showLevelComplete && (
-            <LevelBriefing level={game.level} playerName={game.playerName}
+            <LevelBriefing level={game.level} playerName={game.playerName} character={game.selectedCharacter}
               onStart={() => setGame((prev) => ({ ...prev, showBriefing: false }))} />
           )}
         </AnimatePresence>
@@ -490,7 +646,11 @@ function CharacterSelect({ playerName, chooseCharacter }) {
                   <CardDescription className="text-white/55 text-xs font-medium uppercase tracking-wide mt-0.5">{profile.title}</CardDescription>
                 </CardHeader>
                 <CardContent className="pt-0">
-                  <p className="mb-4 text-sm leading-6 text-white/70">{profile.description}</p>
+                  <p className="mb-3 text-sm leading-6 text-white/70">{profile.description}</p>
+                  <div className="mb-4 rounded-xl border border-white/8 bg-white/4 px-3 py-2">
+                    <div className={cx("text-[10px] font-semibold uppercase tracking-wider mb-0.5", accentBorder(profile.accent).replace("border-", "text-").replace("/40", "/80"))}>{profile.playStyle}</div>
+                    <div className="text-xs text-white/45">{profile.playDesc}</div>
+                  </div>
                   <div className="mb-5 flex flex-wrap gap-2">
                     {Object.entries(profile.bonus).map(([stat, val]) => (
                       <span key={stat} className={cx("rounded-full px-2.5 py-1 text-xs font-medium border bg-white/5 text-white/80", accentBorder(profile.accent))}>+{val} {stat}</span>
@@ -537,18 +697,37 @@ function TopRightHud({ metrics, level, levelDone }) {
   );
 }
 
-function ObjectiveHud({ game, evidenceCount }) {
+function ObjectiveHud({ game, evidenceCount, path }) {
   const { level } = game;
   const info = LEVEL_INFO[level];
 
   if (level === 1) {
+    // Owl: show survey progress instead of timer
+    if (path.l1Mode === "survey") {
+      const answered = Object.keys(game.owlSurveyAnswered).length;
+      const total = OWL_SURVEY.length;
+      return (
+        <div className="pointer-events-auto rounded-2xl border border-white/10 bg-black/40 text-white backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.32)] px-4 py-3 w-[230px]">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="h-2 w-2 rounded-full bg-violet-400 shrink-0" />
+            <span className="text-[10px] font-semibold text-white/50 uppercase tracking-wide">Level 1 · Observe &amp; Report</span>
+          </div>
+          <div className="text-3xl font-bold tabular-nums mb-1 text-violet-300">{answered}<span className="text-lg text-white/40">/{total}</span></div>
+          <div className="text-xs text-white/60 mb-2.5">observations recorded</div>
+          <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+            <motion.div className="h-1.5 rounded-full bg-violet-400" animate={{ width: `${(answered / total) * 100}%` }} transition={{ duration: 0.3 }} />
+          </div>
+          <div className="mt-2 text-[10px] text-white/28">No timer — answer honestly</div>
+        </div>
+      );
+    }
     const collected = game.trashCollected.length;
-    const total = TRASH_POSITIONS.length;
-    const pct = Math.round((collected / total) * 100);
+    const total = path.trashCount;
+    const pct = total > 0 ? Math.round((collected / total) * 100) : 0;
     const t = game.trashTimerLeft;
     const mins = Math.floor(t / 60);
     const secs = t % 60;
-    const urgent = t < 20 && t > 0;
+    const urgent = t < 20 && t > 0 && path.l1Mode === "trash";
     return (
       <div className="pointer-events-auto rounded-2xl border border-white/10 bg-black/40 text-white backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.32)] px-4 py-3 w-[230px]">
         <div className="flex items-center gap-2 mb-2">
@@ -666,6 +845,46 @@ function QuickQuestPopup({ nodeId, game, saveAnswer }) {
   );
 }
 
+// ── Owl observation survey (level 1, observer path) ──────────────────────
+function OwlObservePanel({ game, onAnswer }) {
+  const answered = game.owlSurveyAnswered;
+  const currentIdx = OWL_SURVEY.findIndex((q) => !answered[q.id]);
+  if (currentIdx === -1) return null;
+  const q = OWL_SURVEY[currentIdx];
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <motion.div key={q.id} initial={{ scale: 0.94, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0 }}
+        transition={{ type: "spring", stiffness: 280, damping: 24 }}
+        className="w-full max-w-lg mx-4 rounded-3xl border border-violet-400/20 bg-[#0d1117] overflow-hidden shadow-2xl">
+        <div className="h-1.5 bg-gradient-to-r from-violet-500/80 to-fuchsia-400/30" />
+        <div className="p-7">
+          {/* progress bar */}
+          <div className="flex gap-1.5 mb-5">
+            {OWL_SURVEY.map((sq, i) => (
+              <div key={i} className={cx("h-1 rounded-full flex-1 transition-all duration-300",
+                answered[sq.id] ? "bg-violet-400" : i === currentIdx ? "bg-violet-400/45" : "bg-white/10")} />
+            ))}
+          </div>
+          <div className="text-[10px] font-semibold text-violet-300/70 uppercase tracking-widest mb-3">
+            Forest Observation · {currentIdx + 1} of {OWL_SURVEY.length}
+          </div>
+          <p className="text-lg font-medium text-white leading-snug mb-5">{q.q}</p>
+          <div className="space-y-2.5">
+            {q.options.map(([label, effects], i) => (
+              <motion.button key={i} whileHover={{ x: 4 }} transition={{ duration: 0.1 }}
+                onClick={() => onAnswer(q.id, label, effects)}
+                className="w-full text-left text-sm rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white/75 hover:bg-violet-500/10 hover:border-violet-400/30 hover:text-white transition-all cursor-pointer">
+                {label}
+              </motion.button>
+            ))}
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // ── Level briefing overlay ────────────────────────────────────────────────
 const LEVEL_BRIEFINGS = {
   1: {
@@ -700,10 +919,18 @@ const LEVEL_BRIEFINGS = {
   },
 };
 
-function LevelBriefing({ level, playerName, onStart }) {
+const L1_STEPS = {
+  trash:       ["Trash pieces are scattered across the forest — look for glowing items.", "Walk close to a piece to collect it automatically — no button needed.", "Collect all 12 pieces before the 90-second timer runs out.", "Faster collection = higher Environment score. Good luck!"],
+  "trash-light": ["6 pieces of debris are scattered around the forest.", "Walk close to a piece to collect it automatically — you have 2 minutes.", "A relaxed pace — collect all 6 to complete the level.", "Your answers in later levels matter most on this path."],
+  survey:      ["No timer, no running — just walk through the forest and observe.", "Four observation questions will appear on screen one at a time.", "Answer each honestly based on what you'd notice in a real workplace.", "Your responses shape the ESG signals for Verdantia."],
+};
+
+function LevelBriefing({ level, playerName, character, onStart }) {
   const info = LEVEL_INFO[level];
   const briefing = LEVEL_BRIEFINGS[level];
   const Icon = briefing.icon;
+  const p = CHARACTER_PATHS[character] || CHARACTER_PATHS.beaver;
+  const steps = level === 1 ? (L1_STEPS[p.l1Mode] || briefing.steps) : briefing.steps;
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
@@ -736,7 +963,7 @@ function LevelBriefing({ level, playerName, onStart }) {
 
           {/* steps */}
           <ol className="space-y-3 mb-6">
-            {briefing.steps.map((step, i) => (
+            {steps.map((step, i) => (
               <li key={i} className="flex gap-3 items-start">
                 <span className="mt-0.5 h-5 w-5 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold"
                   style={{ background: briefing.color + "22", color: briefing.color }}>
@@ -796,7 +1023,7 @@ function LevelCompleteOverlay({ level, onContinue }) {
 }
 
 // ── 3D World ──────────────────────────────────────────────────────────────
-function ForestWorld({ playerPos, setPlayerPos, nearestNodeId, setNearestNodeId, freeCamera, character, level, trashCollected, onCollect, answeredNodeKeys }) {
+function ForestWorld({ playerPos, setPlayerPos, nearestNodeId, setNearestNodeId, freeCamera, character, level, trashCollected, onCollect, answeredNodeKeys, trashCount }) {
   const keysRef = useRef({});
   const playerPosRef = useRef(playerPos);
   const nearestNodeRef = useRef(null);
@@ -839,8 +1066,8 @@ function ForestWorld({ playerPos, setPlayerPos, nearestNodeId, setNearestNodeId,
     }
 
     // Auto-collect trash (level 1)
-    if (level === 1) {
-      TRASH_POSITIONS.forEach((item) => {
+    if (level === 1 && trashCount > 0) {
+      TRASH_POSITIONS.slice(0, trashCount).forEach((item) => {
         if (collectedRef.current.includes(item.id)) return;
         const dx = item.pos[0] - nextX, dz = item.pos[2] - nextZ;
         if (Math.sqrt(dx * dx + dz * dz) < COLLECT_DISTANCE) onCollect(item.id);
@@ -874,7 +1101,7 @@ function ForestWorld({ playerPos, setPlayerPos, nearestNodeId, setNearestNodeId,
       <ForestTrees />
       <Lanterns />
       {level >= 2 && <QuestMarkers nearestNodeId={nearestNodeId} level={level} answeredNodeKeys={answeredNodeKeys} />}
-      {level === 1 && TRASH_POSITIONS.map((item) => (
+      {level === 1 && TRASH_POSITIONS.slice(0, trashCount).map((item) => (
         <TrashItem key={item.id} position={item.pos} collected={trashCollected.includes(item.id)} />
       ))}
       <PlayerAvatar position={playerPos} character={character} />
@@ -1452,7 +1679,7 @@ function PolicyCard({ title, text, impact, active, onClick }) {
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────
-function SummaryScreen({ game, selectedProfile, forestStatus, evidenceCount, restart }) {
+function SummaryScreen({ game, selectedProfile, forestStatus, evidenceCount, restart, saveStatus }) {
   const metrics = [
     { label: "Environmental balance", value: game.metrics.environment, icon: Leaf },
     { label: "Social harmony", value: game.metrics.social, icon: Users },
@@ -1529,9 +1756,15 @@ function SummaryScreen({ game, selectedProfile, forestStatus, evidenceCount, res
         </CardContent>
       </Card>
 
-      <div className="flex gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Button onClick={restart} className="rounded-xl bg-white text-slate-950 hover:bg-white/90">Play again</Button>
         <Button variant="outline" className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10">Export mocked report</Button>
+        <div className="ml-auto flex items-center gap-2 text-xs">
+          {saveStatus === "saving" && <><div className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" /><span className="text-white/40">Saving to Sheets…</span></>}
+          {saveStatus === "saved"  && <><div className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-emerald-300/70">Saved to Sheets</span></>}
+          {saveStatus === "error"  && <><div className="h-2 w-2 rounded-full bg-rose-400" /><span className="text-rose-300/70">Sheets save failed</span></>}
+          {saveStatus === "idle"   && SHEETS_ENDPOINT.startsWith("YOUR_") && <span className="text-white/20">Sheets not configured</span>}
+        </div>
       </div>
     </div>
   );
