@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 //AKfycbyDCqTmq8W75kfFLhsSTI0R8XXcvJz1K_ThWyEavvlli7TvjrrfgKsNUgTFIGo6GpJpAA
-const SHEETS_ENDPOINT = "https://script.google.com/macros/s/AKfycbwlusybEOk2_e45DLWR3pAc8cdV21ehGg8nEyYjRX0Kh8I49dsphWkrz-lXX5GLg5d38A/exec";
+const SHEETS_ENDPOINT = "https://script.google.com/macros/s/AKfycbxSr48RZMF0Spyr66FbztaruovD3pjNZOFPoPfMkUhLILecVDl-bLtnhX2A72YC-fI_LQ/exec";
 
 function buildSheetRow(game) {
   const p = CHARACTER_PATHS[game.selectedCharacter] || CHARACTER_PATHS.beaver;
@@ -279,7 +279,8 @@ function App() {
   const [playerPos, setPlayerPos] = useState([...START_PLAYER_POS]);
   const [nearestNodeId, setNearestNodeId] = useState(null);
   const [freeCamera, setFreeCamera] = useState(false);
-  const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
+  const [saveStatus, setSaveStatus] = useState("idle"); 
+  const hasSavedRef = useRef(false);
 
   const selectedProfile = game.selectedCharacter ? characterProfiles[game.selectedCharacter] : null;
   const path = CHARACTER_PATHS[game.selectedCharacter] || CHARACTER_PATHS.beaver;
@@ -346,6 +347,29 @@ function App() {
   useEffect(() => {
     if (game.phase !== "summary") return;
     setSaveStatus("saving");
+    async function postToSheets(game) {
+      if (!SHEETS_ENDPOINT || !SHEETS_ENDPOINT.startsWith("https://")) {
+        throw new Error("Invalid Sheets endpoint");
+      }
+    
+      const row = buildSheetRow(game);
+      const params = new URLSearchParams();
+      params.append("payload", JSON.stringify(row));
+    
+      const res = await fetch(SHEETS_ENDPOINT, {
+        method: "POST",
+        body: params,
+      });
+    
+      const text = await res.text();
+      console.log("Sheets response:", res.status, text);
+    
+      if (!res.ok) {
+        throw new Error(`Sheets request failed: ${res.status} ${text}`);
+      }
+    
+      return text;
+    }
     postToSheets(game)
       .then(() => setSaveStatus("saved"))
       .catch(() => setSaveStatus("error"));
@@ -419,7 +443,14 @@ function App() {
     });
   };
 
-  const resetGame = () => { setGame(initialState); setPlayerPos([...START_PLAYER_POS]); setNearestNodeId(null); setFreeCamera(false); };
+  const resetGame = () => {
+    hasSavedRef.current = false;
+    setGame(initialState);
+    setPlayerPos([...START_PLAYER_POS]);
+    setNearestNodeId(null);
+    setFreeCamera(false);
+    setSaveStatus("idle");
+  };
 
   const answeredNodeKeys = Object.keys(game.answers);
 
