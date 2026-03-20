@@ -9,34 +9,6 @@ import {
   Sparkles as SparklesIcon, Trees, Users,
 } from "lucide-react";
 
-// ── Google Sheets integration ─────────────────────────────────────────────
-//
-// HOW TO SET UP:
-//  1. Open Google Sheets → create a new sheet.
-//  2. In the sheet, go to Extensions → Apps Script.
-//  3. Replace the default code with this:
-//
-//  ------------------------------------------------------------------
-//  function doPost(e) {
-//    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-//    var data = JSON.parse(e.parameter.payload);
-//    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-//    if (headers[0] === "") {
-//      // Write header row on first run
-//      var cols = Object.keys(data);
-//      sheet.getRange(1, 1, 1, cols.length).setValues([cols]);
-//    }
-//    var row = Object.keys(data).map(function(k) { return data[k] ?? ""; });
-//    sheet.appendRow(row);
-//    return ContentService.createTextOutput(JSON.stringify({ status: "ok" }))
-//      .setMimeType(ContentService.MimeType.JSON);
-//  }
-//  ------------------------------------------------------------------
-//
-//  4. Click Deploy → New deployment → Web app.
-//     Execute as: Me | Who has access: Anyone
-//  5. Copy the deployment URL and paste it below.
-
 //AKfycbyDCqTmq8W75kfFLhsSTI0R8XXcvJz1K_ThWyEavvlli7TvjrrfgKsNUgTFIGo6GpJpAA
 const SHEETS_ENDPOINT = "https://script.google.com/macros/s/AKfycbwlusybEOk2_e45DLWR3pAc8cdV21ehGg8nEyYjRX0Kh8I49dsphWkrz-lXX5GLg5d38A/exec";
 
