@@ -8,62 +8,33 @@ import {
   Eye, Hammer, Leaf, Scale, ScrollText, ShieldCheck,
   Sparkles as SparklesIcon, Trees, Users,
 } from "lucide-react";
+import { saveResponseToSheets } from "./saveResponseToSheets";
 
-//AKfycbyDCqTmq8W75kfFLhsSTI0R8XXcvJz1K_ThWyEavvlli7TvjrrfgKsNUgTFIGo6GpJpAA
-const SHEETS_ENDPOINT = "https://script.google.com/macros/s/AKfycbxSr48RZMF0Spyr66FbztaruovD3pjNZOFPoPfMkUhLILecVDl-bLtnhX2A72YC-fI_LQ/exec";
+// ── Prototype identity ────────────────────────────────────────────────────
+// REPLACE WITH: Entra ID OID from the MSAL access-token claims when auth is integrated.
+const PROTOTYPE_USER_ID = (() => {
+  const key = "gap_proto_uid";
+  let id = localStorage.getItem(key);
+  if (!id) { id = "proto_" + Math.random().toString(36).slice(2, 10); localStorage.setItem(key, id); }
+  return id;
+})();
 
-function buildSheetRow(game) {
-  const p = CHARACTER_PATHS[game.selectedCharacter] || CHARACTER_PATHS.beaver;
-  const qs = QUICK_QUESTIONS;
-  return {
-    timestamp:            new Date().toISOString(),
-    player_name:          game.playerName || "",
-    character:            game.selectedCharacter || "",
-    play_path:            p.tag,
-    levels_completed:     Object.values(game.levelDone).filter(Boolean).length,
-    // — ESG scores —
-    score_environment:    game.metrics.environment,
-    score_social:         game.metrics.social,
-    score_governance:     game.metrics.governance,
-    score_alignment:      game.metrics.alignment,
-    // — Level 1 —
-    trash_collected:      game.trashCollected.length,
-    trash_target:         p.trashCount,
-    // — Level 1 Owl survey —
-    owl_obs1:             game.owlSurveyAnswered?.owl_obs1 || "",
-    owl_obs2:             game.owlSurveyAnswered?.owl_obs2 || "",
-    owl_obs3:             game.owlSurveyAnswered?.owl_obs3 || "",
-    owl_obs4:             game.owlSurveyAnswered?.owl_obs4 || "",
-    // — Level 2 station answers —
-    station_river:        game.answers?.[qs.river?.key]      || "",
-    station_otter:        game.answers?.[qs.otter?.key]      || "",
-    station_meadow:       game.answers?.[qs.meadow?.key]     || "",
-    station_deer:         game.answers?.[qs.deer?.key]       || "",
-    station_archive:      game.answers?.[qs.archive?.key]    || "",
-    // — Level 3 council interview —
-    council_q1:           game.voiceSaved?.council_q1 || "",
-    council_q2:           game.voiceSaved?.council_q2 || "",
-    council_q3:           game.voiceSaved?.council_q3 || "",
-    // — Level 3 evidence & policy —
-    evidence_ledger:      game.evidenceFound?.hiddenLedger   ? "found" : "missed",
-    evidence_minutes:     game.evidenceFound?.missingMinutes ? "found" : "missed",
-    evidence_seal:        game.evidenceFound?.brokenSeal     ? "found" : "missed",
-    policy_chosen:        game.policyChoice || "none",
-  };
-}
+// Groups all answers submitted in one browser session (resets on tab close).
+const SESSION_ID = (() => {
+  const key = "gap_session_id";
+  let id = sessionStorage.getItem(key);
+  if (!id) { id = "sess_" + Math.random().toString(36).slice(2, 10); sessionStorage.setItem(key, id); }
+  return id;
+})();
 
-async function postToSheets(game) {
-  if (!SHEETS_ENDPOINT || !SHEETS_ENDPOINT.startsWith("https://")) return;
-  const row = buildSheetRow(game);
-  // URLSearchParams sends as application/x-www-form-urlencoded — a "simple" CORS header
-  // that works reliably with Apps Script via e.parameter.payload (no preflight needed).
-  const params = new URLSearchParams();
-  params.append("payload", JSON.stringify(row));
-  await fetch(SHEETS_ENDPOINT, {
-    method: "POST",
-    body: params,   // URLSearchParams → no preflight; Google adds Access-Control-Allow-Origin automatically
-  });
-}
+// Pre-fills identity fields shared by every row posted from this session.
+// Pass question_id, answer, scene_name, and optionally completion_status per call.
+const save = (args) => saveResponseToSheets({
+  user_id: PROTOTYPE_USER_ID,
+  session_id: SESSION_ID,
+  country_or_tenant: import.meta.env.VITE_TENANT_ID || "NL",
+  ...args,
+});
 
 // ── Constants ────────────────────────────────────────────────────────────
 const PLAYER_SPEED = 5.5;
@@ -265,14 +236,6 @@ function CardContent({ className = "", children }) { return <div className={cx("
 function Input({ className = "", ...props }) { return <input className={cx("w-full rounded-xl border px-3 py-2 text-sm outline-none", className)} {...props} />; }
 function Textarea({ className = "", ...props }) { return <textarea className={cx("w-full rounded-xl border px-3 py-2 text-sm outline-none", className)} {...props} />; }
 
-// ── Self-checks ────────────────────────────────────────────────────────────
-const SELF_CHECKS = [
-  { name: "clamp works", pass: clamp(140, 0, 100) === 100 && clamp(-4, 0, 100) === 0 },
-  { name: "applyEffects works", pass: applyEffects({ environment: 50 }, { environment: 10 }).environment === 60 },
-  { name: "formatPolicy works", pass: formatPolicy("guardian-panel") === "Citizen Guardian Panel" },
-  { name: "nearest-node resolves", pass: typeof getNearestNodeInfo([0, 0, 14]).nearestId === "string" },
-];
-
 // ── App ────────────────────────────────────────────────────────────────────
 function App() {
   const [game, setGame] = useState(initialState);
@@ -347,30 +310,12 @@ function App() {
   useEffect(() => {
     if (game.phase !== "summary") return;
     setSaveStatus("saving");
-    async function postToSheets(game) {
-      if (!SHEETS_ENDPOINT || !SHEETS_ENDPOINT.startsWith("https://")) {
-        throw new Error("Invalid Sheets endpoint");
-      }
-    
-      const row = buildSheetRow(game);
-      const params = new URLSearchParams();
-      params.append("payload", JSON.stringify(row));
-    
-      const res = await fetch(SHEETS_ENDPOINT, {
-        method: "POST",
-        body: params,
-      });
-    
-      const text = await res.text();
-      console.log("Sheets response:", res.status, text);
-    
-      if (!res.ok) {
-        throw new Error(`Sheets request failed: ${res.status} ${text}`);
-      }
-    
-      return text;
-    }
-    postToSheets(game)
+    save({
+      question_id: "game_complete",
+      answer: `policy:${game.policyChoice || "none"}|levels:${Object.values(game.levelDone).filter(Boolean).length}/3`,
+      scene_name: "summary",
+      completion_status: "completed",
+    })
       .then(() => setSaveStatus("saved"))
       .catch(() => setSaveStatus("error"));
   }, [game.phase]);
@@ -408,14 +353,22 @@ function App() {
         ...(allDone ? { levelDone: { ...prev.levelDone, 1: true }, showLevelComplete: true } : {}),
       };
     });
+    save({ question_id: id, answer: label, scene_name: "level1_owl_survey" });
   };
 
   const saveAnswer = (key, value, effects = {}) => {
     setGame((prev) => ({ ...prev, answers: { ...prev.answers, [key]: value }, metrics: applyEffects(prev.metrics, effects), log: [...prev.log, { type: "answer", key, value }] }));
+    // Skip council interview keys — already posted via saveVoice to avoid duplicate rows
+    if (!key.endsWith("_interview")) {
+      const scene = key === "gov_credibility" ? "level3_gov_credibility" : "level2_station";
+      save({ question_id: key, answer: value, scene_name: scene });
+    }
   };
 
   const saveVoice = (key, text) => {
-    setGame((prev) => ({ ...prev, voiceSaved: { ...prev.voiceSaved, [key]: text?.trim() || "[recorded]" } }));
+    const saved = text?.trim() || "[recorded]";
+    setGame((prev) => ({ ...prev, voiceSaved: { ...prev.voiceSaved, [key]: saved } }));
+    save({ question_id: key, answer: saved, scene_name: "level3_council_interview" });
   };
 
   const findEvidence = (key, effects) => {
@@ -427,6 +380,7 @@ function App() {
 
   const choosePolicy = (choice, effects) => {
     setGame((prev) => ({ ...prev, policyChoice: choice, metrics: applyEffects(prev.metrics, effects) }));
+    save({ question_id: "policy_choice", answer: choice, scene_name: "level3_policy_choice" });
   };
 
   const chooseCharacter = (id) => {
@@ -1682,62 +1636,193 @@ function PolicyCard({ title, text, impact, active, onClick }) {
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────
+
+// Simulated benchmark averages — will be replaced with real Sheets aggregates once data accumulates
+const BENCHMARK = { environment: 62, social: 58, governance: 54, alignment: 51 };
+
+function esgArchetype(metrics) {
+  const { environment, social, governance, alignment } = metrics;
+  const top = Object.entries({ environment, social, governance }).sort((a, b) => b[1] - a[1])[0][0];
+  const avg = (environment + social + governance + alignment) / 4;
+  if (avg >= 78) return { name: "The Aligned Steward", tagline: "All pillars high — you see the full picture.", color: "from-emerald-400 via-cyan-400 to-violet-400", badge: "bg-emerald-500/20 text-emerald-200", icon: Crown };
+  if (top === "environment") return { name: "The Environmental Vanguard", tagline: "Action-first. You prioritise visible, tangible repair.", color: "from-emerald-400 via-lime-400 to-cyan-400", badge: "bg-emerald-500/20 text-emerald-200", icon: Leaf };
+  if (top === "social") return { name: "The Community Weaver", tagline: "People-first. You hear what others walk past.", color: "from-amber-400 via-orange-400 to-rose-400", badge: "bg-amber-500/20 text-amber-200", icon: Users };
+  if (top === "governance") return { name: "The Governance Architect", tagline: "Truth-first. You follow the evidence, not the consensus.", color: "from-violet-400 via-purple-400 to-sky-400", badge: "bg-violet-500/20 text-violet-200", icon: ShieldCheck };
+  return { name: "The Forest Seeker", tagline: "Still finding your path — every signal has value.", color: "from-slate-400 via-zinc-400 to-slate-500", badge: "bg-white/10 text-white/60", icon: Trees };
+}
+
 function SummaryScreen({ game, selectedProfile, forestStatus, evidenceCount, restart, saveStatus }) {
-  const metrics = [
-    { label: "Environmental balance", value: game.metrics.environment, icon: Leaf },
-    { label: "Social harmony", value: game.metrics.social, icon: Users },
-    { label: "Governance trust", value: game.metrics.governance, icon: ShieldCheck },
-    { label: "Alignment", value: game.metrics.alignment, icon: Crown },
-  ];
+  const archetype = esgArchetype(game.metrics);
+  const ArchIcon = archetype.icon;
   const communityAnswers = LEVEL2_REQUIRED.filter((id) => QUICK_QUESTIONS[id].key in game.answers).length;
+
+  const metricDefs = [
+    { key: "environment", label: "Environment", icon: Leaf, color: "from-emerald-300 to-cyan-300" },
+    { key: "social", label: "Social", icon: Users, color: "from-amber-300 to-orange-300" },
+    { key: "governance", label: "Governance", icon: ShieldCheck, color: "from-violet-300 to-purple-300" },
+    { key: "alignment", label: "Alignment", icon: Crown, color: "from-sky-300 to-blue-300" },
+  ];
+
+  const answerRecap = Object.entries(QUICK_QUESTIONS).map(([id, q]) => {
+    const chosen = game.answers[q.key];
+    if (!chosen) return null;
+    return { id, npc: q.npc, question: q.question, answer: chosen, color: q.color };
+  }).filter(Boolean);
+
   return (
-    <div className="space-y-6">
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+    <div className="space-y-6 pb-12">
+
+      {/* ── ESG profile hero ── */}
+      <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-black/40 p-8 text-white backdrop-blur-xl">
+        <div className={`absolute inset-0 bg-gradient-to-br ${archetype.color} opacity-[0.08] pointer-events-none`} />
+        <div className="relative flex flex-col items-center text-center gap-4">
+          <div className={`inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-xs uppercase tracking-[0.22em] ${archetype.badge}`}>
+            Your ESG profile
+          </div>
+          <div className={`flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br ${archetype.color} shadow-[0_0_40px_rgba(0,0,0,0.4)]`}>
+            <ArchIcon className="h-10 w-10 text-white drop-shadow" />
+          </div>
+          <div>
+            <h2 className="text-3xl font-semibold tracking-tight lg:text-4xl">{archetype.name}</h2>
+            <p className="mt-2 text-white/60 text-base max-w-md mx-auto">{archetype.tagline}</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm">
+            <span className="font-medium text-white/80">{game.playerName || "Guardian"}</span>
+            <span className="text-white/20">·</span>
+            <span className="text-white/50">{selectedProfile?.name}</span>
+            <span className="text-white/20">·</span>
+            <span className={forestStatus.tone}>{forestStatus.label}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── ESG scores + comparison ── */}
+      <div className="grid gap-6 lg:grid-cols-2">
+
+        {/* Animated score bars */}
         <Card className="border-white/10 bg-black/35 text-white backdrop-blur-xl">
           <CardHeader>
-            <Badge className="mb-2 w-fit bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/20">forest restoration summary</Badge>
-            <CardTitle className="text-3xl">{forestStatus.label}</CardTitle>
-            <CardDescription className={cx("text-base", forestStatus.tone)}>{forestStatus.desc}</CardDescription>
+            <Badge className="mb-1 w-fit bg-white/8 text-white/60 text-[10px] uppercase tracking-widest">your scores</Badge>
+            <CardTitle className="text-xl">ESG breakdown</CardTitle>
+            <CardDescription className="text-white/50 text-xs mt-1">Vertical marker shows the forest average</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-2">
-            {metrics.map((m) => <MetricCard key={m.label} {...m} />)}
+          <CardContent className="space-y-5">
+            {metricDefs.map(({ key, label, icon: Icon, color }) => {
+              const val = game.metrics[key];
+              const bench = BENCHMARK[key];
+              const diff = val - bench;
+              return (
+                <div key={key}>
+                  <div className="mb-2 flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <Icon className="h-3.5 w-3.5 text-white/40" />
+                      <span className="text-white/75">{label}</span>
+                    </div>
+                    <div className="flex items-center gap-2.5">
+                      <span className={`text-xs font-medium ${diff >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                        {diff >= 0 ? "+" : ""}{diff} vs avg
+                      </span>
+                      <span className="font-bold text-white tabular-nums">{val}</span>
+                    </div>
+                  </div>
+                  <div className="relative h-2.5 rounded-full bg-white/8 overflow-hidden">
+                    <motion.div
+                      className={`h-2.5 rounded-full bg-gradient-to-r ${color}`}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${val}%` }}
+                      transition={{ duration: 0.9, ease: "easeOut", delay: 0.1 }}
+                    />
+                    <div className="absolute top-0 bottom-0 w-px bg-white/40 z-10" style={{ left: `${bench}%` }} />
+                  </div>
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
 
+        {/* Comparison vs. other guardians */}
         <Card className="border-white/10 bg-black/35 text-white backdrop-blur-xl">
           <CardHeader>
-            <CardTitle>Your playthrough</CardTitle>
-            <CardDescription className="text-white/65">What you accomplished across 3 levels</CardDescription>
+            <Badge className="mb-1 w-fit bg-white/8 text-white/60 text-[10px] uppercase tracking-widest">benchmarking</Badge>
+            <CardTitle className="text-xl">vs. other guardians</CardTitle>
+            <CardDescription className="text-white/50 text-xs mt-1">Simulated forest-wide average</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4 text-sm text-white/75">
-            <StatusRow label="Guardian" value={selectedProfile?.name || "None"} />
-            <StatusRow label="Levels completed" value={`${Object.values(game.levelDone).filter(Boolean).length}/3`} />
-            <StatusRow label="Trash collected" value={`${game.trashCollected.length}/${TRASH_POSITIONS.length}`} />
-            <StatusRow label="Communities heard" value={`${communityAnswers}/4`} />
-            <StatusRow label="Council clues" value={`${evidenceCount}/3 found`} />
-            <StatusRow label="Policy chosen" value={formatPolicy(game.policyChoice)} />
+          <CardContent className="space-y-3">
+            {metricDefs.map(({ key, label, icon: Icon }) => {
+              const val = game.metrics[key];
+              const bench = BENCHMARK[key];
+              const pct = Math.round((val / bench - 1) * 100);
+              const isAbove = pct >= 5;
+              const isBelow = pct <= -5;
+              return (
+                <div key={key} className="flex items-center gap-4 rounded-2xl border border-white/8 bg-white/4 px-4 py-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10">
+                    <Icon className="h-4 w-4 text-white/55" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-white/90">{label}</div>
+                    <div className="text-xs text-white/35">You: <span className="text-white/60">{val}</span> · Avg: <span className="text-white/60">{bench}</span></div>
+                  </div>
+                  <div className={`text-sm font-semibold rounded-full px-2.5 py-1 tabular-nums ${isAbove ? "bg-emerald-500/20 text-emerald-300" : isBelow ? "bg-rose-500/20 text-rose-300" : "bg-white/8 text-white/50"}`}>
+                    {pct >= 0 ? "+" : ""}{pct}%
+                  </div>
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
       </div>
 
+      {/* ── Key decisions recap ── */}
+      {answerRecap.length > 0 && (
+        <Card className="border-white/10 bg-black/35 text-white backdrop-blur-xl">
+          <CardHeader>
+            <Badge className="mb-1 w-fit bg-white/8 text-white/60 text-[10px] uppercase tracking-widest">your choices</Badge>
+            <CardTitle className="text-xl flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-emerald-300" /> Key decisions
+            </CardTitle>
+            <CardDescription className="text-white/50 text-xs mt-1">What you chose at each community station</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-2">
+            {answerRecap.map(({ id, npc, question, answer, color: nodeColor }) => (
+              <div key={id} className="rounded-2xl border border-white/8 bg-white/4 p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: nodeColor }} />
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-white/40 truncate">{npc}</span>
+                </div>
+                <p className="mb-3 text-xs text-white/50 leading-relaxed line-clamp-2">{question}</p>
+                <div className="flex items-start gap-2 rounded-xl bg-emerald-500/8 border border-emerald-400/15 px-3 py-2">
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
+                  <p className="text-xs font-medium text-white/85 leading-relaxed">{answer}</p>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── ESG signal interpretation ── */}
       <Card className="border-white/10 bg-black/35 text-white backdrop-blur-xl">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-emerald-300" /> Simulated ESG signal output</CardTitle>
-          <CardDescription className="text-white/65">How leadership might interpret this run</CardDescription>
+          <CardTitle className="flex items-center gap-2 text-xl">
+            <BarChart3 className="h-5 w-5 text-emerald-300" /> ESG signal interpretation
+          </CardTitle>
+          <CardDescription className="text-white/50 text-xs mt-1">How leadership might read this run</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2">
-          <InsightPill title="Environmental signal" text={game.metrics.environment >= 70 ? "Environmental action appears visible, practical, and believable." : "Environmental effort may exist but doesn't yet feel consistently tangible to employees."} />
-          <InsightPill title="Social signal" text={game.metrics.social >= 70 ? "The forest feels fairly heard and represented across groups." : "Gaps in fairness, representation, or psychological safety are likely."} />
-          <InsightPill title="Governance signal" text={game.metrics.governance >= 70 ? "Leadership appears credible, transparent, and accountable." : "Employees may perceive weak follow-through or low institutional trust."} />
-          <InsightPill title="Alignment signal" text={game.metrics.alignment >= 70 ? "Management vision and lived experience appear relatively aligned." : "The strongest signal is a mismatch between what leaders say and what people feel daily."} />
+          <InsightPill color="emerald" title="Environmental signal" text={game.metrics.environment >= 70 ? "Environmental action appears visible, practical, and believable." : "Environmental effort may exist but doesn't yet feel consistently tangible to employees."} />
+          <InsightPill color="amber" title="Social signal" text={game.metrics.social >= 70 ? "The forest feels fairly heard and represented across groups." : "Gaps in fairness, representation, or psychological safety are likely."} />
+          <InsightPill color="violet" title="Governance signal" text={game.metrics.governance >= 70 ? "Leadership appears credible, transparent, and accountable." : "Employees may perceive weak follow-through or low institutional trust."} />
+          <InsightPill color="sky" title="Alignment signal" text={game.metrics.alignment >= 70 ? "Management vision and lived experience appear relatively aligned." : "The strongest signal is a mismatch between what leaders say and what people feel daily."} />
         </CardContent>
       </Card>
 
+      {/* ── Voice signals ── */}
       {Object.keys(game.voiceSaved).length > 0 && (
         <Card className="border-white/10 bg-black/35 text-white backdrop-blur-xl">
           <CardHeader>
-            <CardTitle>Collected voice signals</CardTitle>
-            <CardDescription className="text-white/65">Anonymous responses from the governance debrief</CardDescription>
+            <CardTitle className="text-xl">Council voice signals</CardTitle>
+            <CardDescription className="text-white/50 text-xs mt-1">Your responses from the governance debrief</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2 text-sm text-white/70">
@@ -1752,56 +1837,51 @@ function SummaryScreen({ game, selectedProfile, forestStatus, evidenceCount, res
         </Card>
       )}
 
+      {/* ── Playthrough stats ── */}
       <Card className="border-white/10 bg-black/35 text-white backdrop-blur-xl">
-        <CardHeader><CardTitle>Prototype checks</CardTitle></CardHeader>
-        <CardContent className="space-y-2 text-sm text-white/75">
-          {SELF_CHECKS.map((t) => <StatusRow key={t.name} label={t.name} value={t.pass ? "pass" : "fail"} />)}
+        <CardHeader>
+          <CardTitle className="text-base text-white/60">Playthrough stats</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+          <StatTile label="Levels done" value={`${Object.values(game.levelDone).filter(Boolean).length}/3`} />
+          <StatTile label="Debris cleared" value={`${game.trashCollected.length}/${TRASH_POSITIONS.length}`} />
+          <StatTile label="Communities heard" value={`${communityAnswers}/4`} />
+          <StatTile label="Council clues" value={`${evidenceCount}/3`} />
+          <StatTile label="Policy chosen" value={formatPolicy(game.policyChoice)} className="col-span-2" />
+          <StatTile label="Character" value={selectedProfile?.name || "—"} className="col-span-2" />
         </CardContent>
       </Card>
 
+      {/* ── Actions ── */}
       <div className="flex items-center gap-3 flex-wrap">
-        <Button onClick={restart} className="rounded-xl bg-white text-slate-950 hover:bg-white/90">Play again</Button>
-        <Button variant="outline" className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10">Export mocked report</Button>
+        <Button onClick={restart} className="rounded-xl bg-white text-slate-950 hover:bg-white/90 font-medium">Play again</Button>
+        <Button variant="outline">Export mocked report</Button>
         <div className="ml-auto flex items-center gap-2 text-xs">
           {saveStatus === "saving" && <><div className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" /><span className="text-white/40">Saving to Sheets…</span></>}
           {saveStatus === "saved"  && <><div className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-emerald-300/70">Saved to Sheets</span></>}
           {saveStatus === "error"  && <><div className="h-2 w-2 rounded-full bg-rose-400" /><span className="text-rose-300/70">Sheets save failed</span></>}
-          {saveStatus === "idle"   && SHEETS_ENDPOINT.startsWith("YOUR_") && <span className="text-white/20">Sheets not configured</span>}
         </div>
       </div>
     </div>
   );
 }
 
-function StatusRow({ label, value }) {
+function StatTile({ label, value, className = "" }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-3 last:border-b-0 last:pb-0">
-      <span className="text-white/60">{label}</span>
-      <span className="text-right font-medium text-white/90">{value}</span>
+    <div className={cx("rounded-2xl border border-white/8 bg-white/4 px-3 py-2.5", className)}>
+      <div className="text-[10px] font-semibold uppercase tracking-widest text-white/35 mb-0.5">{label}</div>
+      <div className="text-sm font-medium text-white/90 truncate">{value}</div>
     </div>
   );
 }
 
-function MetricCard({ label, value, icon: Icon }) {
+function InsightPill({ title, text, color }) {
+  const borders = { emerald: "border-emerald-400/20", amber: "border-amber-400/20", violet: "border-violet-400/20", sky: "border-sky-400/20" };
+  const titles = { emerald: "text-emerald-300", amber: "text-amber-300", violet: "text-violet-300", sky: "text-sky-300" };
   return (
-    <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10"><Icon className="h-5 w-5 text-emerald-200" /></div>
-        <Badge className="bg-white/10 text-white hover:bg-white/10">{value}/100</Badge>
-      </div>
-      <div className="text-sm text-white/60">{label}</div>
-      <div className="mt-3 h-2 rounded-full bg-white/10">
-        <div className="h-2 rounded-full bg-gradient-to-r from-emerald-300 via-lime-300 to-sky-300" style={{ width: `${value}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function InsightPill({ title, text }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-      <div className="mb-1 font-medium text-white text-sm">{title}</div>
-      <div className="text-xs text-white/70 leading-relaxed">{text}</div>
+    <div className={cx("rounded-2xl border bg-black/20 p-4", color ? borders[color] : "border-white/10")}>
+      <div className={cx("mb-1 font-medium text-sm", color ? titles[color] : "text-white")}>{title}</div>
+      <div className="text-xs text-white/65 leading-relaxed">{text}</div>
     </div>
   );
 }
